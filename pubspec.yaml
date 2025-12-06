@@ -40,6 +40,10 @@ dependencies:
   http: ^1.6.0
   csv: ^6.0.0
   provider: ^6.1.5
+  shared_preferences: ^2.2.3
+  geolocator: ^14.0.2
+  connectivity_plus: ^7.0.0
+  flutter_dialogs: ^3.0.0
 
 dev_dependencies:
   flutter_test:
@@ -68,7 +72,17 @@ flutter:
   #   - images/a_dot_burr.jpeg
   #   - images/a_dot_ham.jpeg
   assets:
-    - assets/csv/gumi_bus_stops.csv
+    - assets/csv/gumi_bus_stops(sortinno).csv
+    - assets/csv/gumi_bus_stops_busindex.csv
+    - assets/csv/gumi_bus_stops_formap.csv
+    - assets/csv/gumi_buses(sortinid).csv
+    - assets/csv/gumi_buses_route.csv
+    - assets/csv/gumi_busnstop_search.csv
+    - assets/csv/gumi_bus_stops(sortinno)_inEng.csv
+    - assets/csv/gumi_buses(sortinid)_inEng.csv
+    - assets/csv/gumi_busnstop_search_inEng.csv
+    - assets/csv/gumi_bus_routes_inroad.csv
+
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
