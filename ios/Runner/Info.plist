@@ -46,10 +46,48 @@
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>NSLocationWhenInUseUsageDescription</key>
-    		<string>사용자의 현재 위치는 사용자 근처의 정보를 가져오는데 반드시 필요합니다!</string>
-    		<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-    		<string>사용자의 현재 위치는 사용자 근처의 정보를 가져오는데 반드시 필요합니다!</string>
-    		<key>NSLocationAlwaysUsageDescription</key>
-    		<string>사용자의 현재 위치는 사용자 근처의 정보를 가져오는데 반드시 필요합니다!</string>
+    <string>사용자의 현재 위치는 사용자 근처의 정보를 가져오는데 반드시 필요합니다!</string>
+    <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+    <string>사용자의 현재 위치는 사용자 근처의 정보를 가져오는데 반드시 필요합니다!</string>
+    <key>NSLocationAlwaysUsageDescription</key>
+    <string>사용자의 현재 위치는 사용자 근처의 정보를 가져오는데 반드시 필요합니다!</string>
+	<key>KAKAO_APP_KEY</key>
+	<string>e945222623a72228f5a7ec826f1fa318</string>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>kakaomap</string>
+	</array>
+	<key>NSAppTransportSecurity</key>
+    <dict>
+        <!-- 전체적으로 ATS 풀기 -->
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+        <!-- WebView 안에서 로딩되는 컨텐츠도 풀기 -->
+        <key>NSAllowsArbitraryLoadsInWebContent</key>
+        <true/>
+
+        <!-- 카카오 지도 / 타일 도메인 예외 -->
+        <key>NSExceptionDomains</key>
+        <dict>
+            <key>kakao.com</key>
+            <dict>
+                <key>NSIncludesSubdomains</key>
+                <true/>
+                <key>NSExceptionAllowsInsecureHTTPLoads</key>
+                <true/>
+                <key>NSExceptionRequiresForwardSecrecy</key>
+                <false/>
+            </dict>
+            <key>daumcdn.net</key>
+            <dict>
+                <key>NSIncludesSubdomains</key>
+                <true/>
+                <key>NSExceptionAllowsInsecureHTTPLoads</key>
+                <true/>
+                <key>NSExceptionRequiresForwardSecrecy</key>
+                <false/>
+            </dict>
+        </dict>
+    </dict>
 </dict>
 </plist>

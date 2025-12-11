@@ -12,9 +12,42 @@ import 'package:geolocator/geolocator.dart';
 import 'package:flutter_dialogs/flutter_dialogs.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 
+final Completer<void> _mapLoaded = Completer<void>();
+
 final WebViewController _controller = WebViewController()
   ..setJavaScriptMode(JavaScriptMode.unrestricted)
+  ..setBackgroundColor(const Color(0x00000000))
+  ..setNavigationDelegate(
+    NavigationDelegate(
+      onPageStarted: (url) {
+        debugPrint('WebView page started: $url');
+      },
+      onPageFinished: (url) {
+        debugPrint('WebView page finished: $url');
+      },
+      onHttpError: (error) {
+        debugPrint(
+          'WebView HTTP error: ${error.response?.statusCode} | ${error.response?.uri}',
+        );
+      },
+      onWebResourceError: (error) {
+        debugPrint(
+          'WebView resource error: ${error.errorCode} | ${error.description}',
+        );
+      },
+    ),
+  )
   ..enableZoom(false);
+
+Future<void> safeRunJs(String script) async {
+  try {
+    // 맵이 로드될 때까지 기다렸다가
+    await _mapLoaded.future;
+    await _controller.runJavaScript(script);
+  } catch (e) {
+    debugPrint('runJavaScript error: $e');
+  }
+}
 
 List<List<dynamic>> stop_data_formap = [];
 List<List<dynamic>> stop_data = [];
@@ -245,13 +278,13 @@ class _busRoutePage extends State<busRoutePage> {
 
   void getdata() {
     List<dynamic> routeindexs = bus_route_data[widget.index];
-    _controller.runJavaScript('resetPath()');
+    safeRunJs('resetPath()');
     for (int i = 0; i < bus_route_inroad_data[widget.index].length; i += 2) {
       final locaResponse = jsonEncode({
         "gpslati": bus_route_inroad_data[widget.index][i],
         "gpslong": bus_route_inroad_data[widget.index][i + 1],
       });
-      _controller.runJavaScript('drawBusroute($locaResponse)');
+      safeRunJs('drawBusroute($locaResponse)');
     }
     route = [];
     if (st._language == Language.Korean) {
@@ -259,10 +292,10 @@ class _busRoutePage extends State<busRoutePage> {
       for (int i = 0; i < routeindexs.length; i++) {
         route.add(
           StopInfo(
-            gpslati: stop_data[routeindexs[i]][3],
-            gpslong: stop_data[routeindexs[i]][4],
-            nodeID: stop_data[routeindexs[i]][0].toString(),
-            nodeName: stop_data[routeindexs[i]][1].toString(),
+              gpslati: stop_data[routeindexs[i]][3],
+              gpslong: stop_data[routeindexs[i]][4],
+              nodeID: stop_data[routeindexs[i]][0].toString(),
+              nodeName: stop_data[routeindexs[i]][1].toString(),
             nodeNo: stop_data[routeindexs[i]][2].toString(),
             nodeOrd: i + 1,
             stopindex: routeindexs[i],
@@ -1658,7 +1691,8 @@ class _DetailPage_onAI extends State<DetailPage_onAI> {
   var st;
   late List<dynamic> data;
   late List<RouteInfo> buses;
-  static const String baseUrl = "http://13.125.234.0:8000/api/buses/station/";//todo limit 물어보기
+  static const String baseUrl =
+      "http://13.125.234.0:8000/api/buses/station/"; //todo limit 물어보기
 
   void getdata() {
     if (st._language == Language.Korean) {
@@ -2120,10 +2154,12 @@ class _Searchpage extends State<Searchpage> {
         _filteredList = [];
       } else {
         // 검색어에 해당하는 항목들만 필터링합니다.
-        for (int i = 0; i < search_data[0].length; i++) {
-          final String item = search_data[0][i];
-          if (item.toLowerCase().contains(query)) {
-            _filteredList.add({'text': item, 'index': i});
+        if (search_data.isNotEmpty && search_data[0].isNotEmpty) {
+          for (int i = 0; i < search_data[0].length; i++) {
+            final String item = search_data[0][i];
+            if (item.toLowerCase().contains(query)) {
+              _filteredList.add({'text': item, 'index': i});
+            }
           }
         }
       }
@@ -2189,6 +2225,17 @@ class _Searchpage extends State<Searchpage> {
                   : ListView.builder(
                       itemCount: _filteredList.length,
                       itemBuilder: (context, index) {
+                        // Boundary checks to prevent RangeError
+                        if (search_data.length < 3)
+                          return const SizedBox.shrink();
+                        final filteredIndex = _filteredList[index]['index'];
+                        if (filteredIndex == null ||
+                            search_data[0].length <= filteredIndex ||
+                            search_data[1].length <= filteredIndex ||
+                            search_data[2].length <= filteredIndex) {
+                          return const SizedBox.shrink();
+                        }
+
                         Text title = Text(
                           _filteredList[index]['text'],
                           style: TextStyle(
@@ -2202,7 +2249,14 @@ class _Searchpage extends State<Searchpage> {
                         int dataindex = int.parse(
                           search_data[2][_filteredList[index]['index']],
                         );
+
+                        // More boundary checks
                         if (type == 0) {
+                          if (dataindex >= bus_data.length ||
+                              (st._language == Language.English &&
+                                  dataindex >= bus_data_EN.length)) {
+                            return const SizedBox.shrink();
+                          }
                           title = Text(
                             '${_filteredList[index]['text']} (${bus_data[dataindex][0]} 방면)',
                             style: TextStyle(
@@ -3651,15 +3705,19 @@ class _settings extends State<settings> {
               context: context,
               builder: (BuildContext context) {
                 return AlertDialog(
-                  title: st._language == Language.Korean ? Text('AI 모드란?') : Text('What is AI Mode?'),
+                  title: st._language == Language.Korean
+                      ? Text('AI 모드란?')
+                      : Text('What is AI Mode?'),
                   content: st._language == Language.Korean
                       ? Text(
-                      'AI를 통해 예측된 버스 도착 정보입니다. 실제 정보와 차이가 있을 수 있으며, 참고용으로만 사용해주세요.\n\n서비스 정류장 : 금오공대종점, 금오공대입구(금오공대종점방면), 금오공대입구(옥계중학교방면)\n서비스 버스 : 10번(구미역(중앙시장) 방면), 196번(구미역(중앙시장) 방면), 960번(구미역(중앙시장) 방면), 80번(인동차고지 방면)')
+                          'AI를 통해 예측된 버스 도착 정보입니다. 실제 정보와 차이가 있을 수 있으며, 참고용으로만 사용해주세요.\n\n서비스 정류장 : 금오공대종점, 금오공대입구(금오공대종점방면), 금오공대입구(옥계중학교방면)\n서비스 버스 : 10번(구미역(중앙시장) 방면), 196번(구미역(중앙시장) 방면), 960번(구미역(중앙시장) 방면), 80번(인동차고지 방면)',
+                        )
                       : Text(
-                      'This is bus arrival information predicted by AI. It may differ from the actual information and should be used for reference only.\n\n'
+                          'This is bus arrival information predicted by AI. It may differ from the actual information and should be used for reference only.\n\n'
                           'Service Stops: Kumoh Institute of Technology terminal, Kumoh Institute of Technology entrance (towards Kumoh Institute of Technology terminal),, Kumoh Institute of Technology entrance (towards Okgye Middle School)\n'
-                          'Service Buses: 10 (to Gumi Stn.), 196 (to Gumi Stn.), 960 (to Gumi Stn.), 80 (to Indong Garage)'),
-//
+                          'Service Buses: 10 (to Gumi Stn.), 196 (to Gumi Stn.), 960 (to Gumi Stn.), 80 (to Indong Garage)',
+                        ),
+                  //
                   /*Text(
                     st._language == Language.Korean
                         ? 'AI를 통해 예측된 버스 도착 정보입니다. 실제 정보와 차이가 있을 수 있으며, 참고용으로만 사용해주세요.\n\n서비스 적용 정류장 : 금오공대종점, 금오공대입구(금오공대종점방면), 금오공대입구(옥계중학교방면)\n서비스 적용 버스 : 10번(구미역(중앙시장) 방면), 196번(구미역(중앙시장) 방면), 960번(구미역(중앙시장) 방면), 80번(인동차고지 방면)'
@@ -3668,7 +3726,9 @@ class _settings extends State<settings> {
                   ),*/
                   actions: <Widget>[
                     TextButton(
-                      child: st._language == Language.Korean ? Text('확인') : Text('OK'),
+                      child: st._language == Language.Korean
+                          ? Text('확인')
+                          : Text('OK'),
                       onPressed: () {
                         Navigator.of(context).pop(); // 다이얼로그 닫기
                       },
@@ -3956,12 +4016,6 @@ class Stackwid extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     int languageIndex = prefs.getInt('language') ?? 0;
     _language = Language.values[languageIndex];
-
-    if (_language == Language.Korean) {
-      search_data = search_data_KR;
-    } else {
-      search_data = search_data_EN;
-    }
 
     int fontsizeIndex = prefs.getInt('fontsize') ?? 0;
     _fontsize = Fontsize.values[fontsizeIndex];
@@ -4473,58 +4527,136 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
   double lat = 36.1430;
   double lng = 128.3941;
 
+  late Future<bool> _initializationFuture;
+
   Future<void> loadCsvData() async {
     final csvString0 = await rootBundle.loadString(
       'assets/csv/gumi_bus_stops_formap.csv',
     );
+    print("csvString0: ${csvString0}");
     stop_data_formap = const CsvToListConverter().convert(csvString0);
     final csvString1 = await rootBundle.loadString(
       'assets/csv/gumi_bus_stops(sortinno).csv',
     );
+
+    print("csvString1: ${csvString1}");
+
     stop_data = const CsvToListConverter().convert(csvString1); //한국어
     final csvString12 = await rootBundle.loadString(
       'assets/csv/gumi_bus_stops(sortinno)_inEng.csv',
     );
+
+    print("csvString12: ${csvString12}");
+
     stop_data_EN = const CsvToListConverter().convert(csvString12); //English
     final csvString2 = await rootBundle.loadString(
       'assets/csv/gumi_bus_stops_busindex.csv',
     );
+
+    print("csvString2: ${csvString2}");
+
     stop_buses_data = const CsvToListConverter().convert(csvString2);
     final csvString3 = await rootBundle.loadString(
       'assets/csv/gumi_buses(sortinid).csv',
     );
+
+    print("csvString3: ${csvString3}");
+
     bus_data = const CsvToListConverter().convert(csvString3); //한국어
     final csvString32 = await rootBundle.loadString(
       'assets/csv/gumi_buses(sortinid)_inEng.csv',
     );
+
+    print("csvString32: ${csvString32}");
+
     bus_data_EN = const CsvToListConverter().convert(csvString32); //English
     final csvString4 = await rootBundle.loadString(
       'assets/csv/gumi_buses_route.csv',
     );
+
+    print("csvString4: ${csvString4}");
+
     bus_route_data = const CsvToListConverter().convert(csvString4);
     final csvString5 = await rootBundle.loadString(
       'assets/csv/gumi_busnstop_search.csv',
     );
+
+    print("csvString5: ${csvString5}");
+
     List<List<dynamic>> before_String = const CsvToListConverter().convert(
       csvString5,
     );
-    search_data_KR = before_String.map((row) {
-      return row.map((cell) => cell.toString()).toList();
-    }).toList(); //한국어
+
+    // 기존 리스트를 비우고, 거기에 채워 넣기 (참조 유지)
+    search_data_KR
+      ..clear()
+      ..addAll(
+        before_String.map((row) => row.map((cell) => cell.toString()).toList()),
+      );
+
+    // 처음 실행 시 기본값으로 한 번은 꽂아주기 (언어는 나중에 changeLanguage에서 다시 맞춤)
+    if (search_data.isEmpty) {
+      search_data = search_data_KR;
+    }
+
     final csvString52 = await rootBundle.loadString(
       'assets/csv/gumi_busnstop_search_inEng.csv',
     );
-    search_data = search_data_KR;
     List<List<dynamic>> before_String2 = const CsvToListConverter().convert(
       csvString52,
     );
-    search_data_EN = before_String2.map((row) {
-      return row.map((cell) => cell.toString()).toList();
-    }).toList(); //English
+    search_data_EN
+      ..clear()
+      ..addAll(
+        before_String2.map(
+          (row) => row.map((cell) => cell.toString()).toList(),
+        ),
+      );
+
     final csvString6 = await rootBundle.loadString(
       'assets/csv/gumi_bus_routes_inroad.csv',
     );
     bus_route_inroad_data = const CsvToListConverter().convert(csvString6);
+
+    final prefs = await SharedPreferences.getInstance();
+    final languageIndex = prefs.getInt('language') ?? 0;
+    if (languageIndex == 0) {
+      // Korean
+      search_data = search_data_KR;
+    } else {
+      // English
+      search_data = search_data_EN;
+    }
+  }
+
+  Future<bool> _initialize() async {
+    await loadCsvData();
+
+    try {
+      final position = await _determinePosition();
+      final html = _buildHtml(
+        widget.kakaoJavascriptKey,
+        position.latitude,
+        position.longitude,
+      );
+      _controller.addJavaScriptChannel(
+        'toFlutter',
+        onMessageReceived: (message) {
+          _handleJsMessage(message.message);
+        },
+      );
+      await _controller.loadHtmlString(html);
+    } catch (e) {
+      final html = _buildHtml(widget.kakaoJavascriptKey, lat, lng);
+      _controller.addJavaScriptChannel(
+        'toFlutter',
+        onMessageReceived: (message) {
+          _handleJsMessage(message.message);
+        },
+      );
+      await _controller.loadHtmlString(html);
+    }
+    return true;
   }
 
   Future<void> _checkInitialConnection() async {
@@ -4576,6 +4708,8 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
   @override
   void initState() {
     super.initState();
+    _initializationFuture = _initialize();
+
     _checkInitialConnection();
     //WidgetsBinding.instance.addPostFrameCallback((_) {
     //  _checkInitialConnection();
@@ -4585,54 +4719,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     _connectivitySubscription = Connectivity().onConnectivityChanged.listen(
       _updateConnectionStatus,
     );
-
-    loadCsvData();
-
-    Future.microtask(() async {
-      // 위치 권한을 확인하고 현재 위치를 가져와 지도를 초기화합니다.
-      try {
-        final position = await _determinePosition();
-        final html = _buildHtml(
-          widget.kakaoJavascriptKey,
-          position.latitude,
-          position.longitude,
-        );
-        _controller.addJavaScriptChannel(
-          'toFlutter',
-          onMessageReceived: (message) {
-            _handleJsMessage(message.message);
-          },
-        );
-        _controller.loadHtmlString(html);
-      } catch (e) {
-        final html = _buildHtml(widget.kakaoJavascriptKey, lat, lng);
-        _controller.addJavaScriptChannel(
-          'toFlutter',
-          onMessageReceived: (message) {
-            _handleJsMessage(message.message);
-          },
-        );
-        _controller.loadHtmlString(html);
-      }
-      /*
-      final position = await _determinePosition();
-      final html = _buildHtml(widget.kakaoJavascriptKey, position.latitude, position.longitude);
-
-      _controller.addJavaScriptChannel('toFlutter', onMessageReceived: (message) {
-        _handleJsMessage(message.message);
-      });
-      _controller.loadHtmlString(html);*/
-    });
-    //final html = _buildHtml(widget.kakaoJavascriptKey, lat, lng);
-
-    /*
-    _controller.addJavaScriptChannel(
-      'toFlutter',
-      onMessageReceived: (message) {
-        _handleJsMessage(message.message);
-      },
-    );
-    _controller.loadHtmlString(html);*/
   }
 
   Future<Position> _determinePosition() async {
@@ -4669,7 +4755,9 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
   //for ver2
 
   int lookforlong(double long, int start, int end) {
+    if (stop_data_formap.isEmpty || start > end) return 0;
     int mid = ((start + end) / 2).toInt();
+    if (mid >= stop_data_formap.length) mid = stop_data_formap.length - 1;
 
     if ((stop_data_formap[mid][1] - long).abs() < 0.00011 || end - start < 2) {
       return mid;
@@ -4698,6 +4786,12 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     try {
       final data = jsonDecode(message);
       final action = data['action'];
+      if (data['action'] == 'js_error') {
+        debugPrint(
+          'Kakao JS Error: ${data['message']} (${data['source']}:${data['line']})',
+        );
+        return;
+      }
       // 마커 클릭 통신 받고 정류장 정보 페이지 열기
       if (action == 'navigateToDetail') {
         final int stopindex = data['stopindex'];
@@ -4803,6 +4897,7 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
         stopsinview(startlng, endlng, startlat, endlat);
       }
     } catch (e) {
+      debugPrint('JS message parse error: $e');
       print('Error decoding JS message: $e');
     }
   }
@@ -4813,8 +4908,13 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     double startlat,
     double endlat,
   ) {
-    final int longstart = lookforlong(startlng, 0, 1566);
-    final int longend = lookforlong(endlng, longstart, 1566);
+    if (stop_data_formap.isEmpty) return;
+    final int longstart = lookforlong(startlng, 0, stop_data_formap.length - 1);
+    final int longend = lookforlong(
+      endlng,
+      longstart,
+      stop_data_formap.length - 1,
+    );
     lookformarkers(startlat, endlat, longstart, longend);
   }
 
@@ -4830,57 +4930,91 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
   @override
   Widget build(BuildContext context) {
     st = Provider.of<Stackwid>(context, listen: true);
-    st.getlastwidget();
-    return WillPopScope(
-      onWillPop: () async {
-        if (st.getlastwidget() == 1 || st.getlastwidget() == 2) {
-          st.backStack(this.context);
-          return false;
-        } else if (st.getlastwidget() == 3 || st.getlastwidget() == 4) {
-          st.backStack1(this.context);
-          return false;
-        }
-        final now = DateTime.now(); // 현재 시간
-        // 마지막으로 누른 시간이 없거나, 누른 지 2초가 지났다면
-        if (_lastBackPressed == null ||
-            now.difference(_lastBackPressed!) > const Duration(seconds: 2)) {
-          // 현재 시간을 마지막으로 누른 시간으로 기록
-          _lastBackPressed = now;
+    return FutureBuilder<bool>(
+      future: _initializationFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.done &&
+            snapshot.hasData &&
+            snapshot.data == true) {
+          st.getlastwidget();
+          return WillPopScope(
+            onWillPop: () async {
+              if (st.getlastwidget() == 1 || st.getlastwidget() == 2) {
+                st.backStack(this.context);
+                return false;
+              } else if (st.getlastwidget() == 3 || st.getlastwidget() == 4) {
+                st.backStack1(this.context);
+                return false;
+              }
+              final now = DateTime.now(); // 현재 시간
+              // 마지막으로 누른 시간이 없거나, 누른 지 2초가 지났다면
+              if (_lastBackPressed == null ||
+                  now.difference(_lastBackPressed!) >
+                      const Duration(seconds: 2)) {
+                // 현재 시간을 마지막으로 누른 시간으로 기록
+                _lastBackPressed = now;
 
-          // 화면 하단에 안내 메시지(SnackBar) 표시
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
+                // 화면 하단에 안내 메시지(SnackBar) 표시
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      st._language == Language.Korean
+                          ? '한 번 더 누르면 종료됩니다.'
+                          : 'Press back again to exit.',
+                    ),
+                    duration: const Duration(seconds: 2), // 2초 동안 보여줌
+                  ),
+                );
+
+                // false를 반환하여 앱이 (아직) 종료되지 않도록 함
+                return false;
+              }
+
+              // 2초 안에 다시 눌렀다면, true를 반환하여 앱을 정상적으로 종료함
+              return true;
+            },
+            child: Scaffold(body: Stack(children: st.stacklist)),
+          );
+        } else if (snapshot.hasError) {
+          // Handle errors during initialization
+          return Scaffold(
+            body: Center(
+              child: Text(
                 st._language == Language.Korean
-                    ? '한 번 더 누르면 종료됩니다.'
-                    : 'Press back again to exit.',
+                    ? '초기화 중 오류가 발생했습니다: ${snapshot.error}'
+                    : 'Error during initialization: ${snapshot.error}',
               ),
-              duration: const Duration(seconds: 2), // 2초 동안 보여줌
             ),
           );
-
-          // false를 반환하여 앱이 (아직) 종료되지 않도록 함
-          return false;
+        } else {
+          // Show a loading indicator while waiting
+          return Scaffold(
+            body: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: <Widget>[
+                  Image.asset('assets/icon/icon.png', width: 100, height: 100),
+                  const SizedBox(height: 20),
+                  const CircularProgressIndicator(),
+                  const SizedBox(height: 10),
+                  Text(
+                    st._language == Language.Korean
+                        ? '데이터를 불러오는 중...'
+                        : 'Loading data...',
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
+          );
         }
-
-        // 2초 안에 다시 눌렀다면, true를 반환하여 앱을 정상적으로 종료함
-        return true;
-        /*
-        else {
-          return true;
-        }*/
       },
-      child: Scaffold(body: Stack(children: st.stacklist)),
     );
-    /*
-    return Scaffold(
-      body: Stack(children: st.stacklist),
-    );*/
   }
 
   String _buildHtml(String appKey, double initLat, double initLng) {
     // Flutter에서 로컬 HTML을 만들어 WebView로 로드.
-    // 카카오 JS SDK 로드 후, 글로벌 함수 updateBus(json)로 마커/지도 갱신.
+    // 카카오 JS SDK 로드 후, 글로벌 함수 updateBus(json) 등으로 마커/지도 갱신.
     return '''
 <!doctype html>
 <html lang="ko">
@@ -4897,114 +5031,175 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
 </style>
 <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=$appKey&autoload=false"></script>
 <script>
+  // ===== Flutter로 console / 에러 보내는 훅 =====
+  (function() {
+    var oldLog = console.log;
+    var oldError = console.error;
+
+    console.log = function() {
+      try {
+        if (window.toFlutter && typeof toFlutter.postMessage === 'function') {
+          toFlutter.postMessage(JSON.stringify({
+            action: 'log',
+            message: Array.prototype.join.call(arguments, ' ')
+          }));
+        }
+      } catch(e) {}
+      if (oldLog) oldLog.apply(console, arguments);
+    };
+
+    console.error = function() {
+      try {
+        if (window.toFlutter && typeof toFlutter.postMessage === 'function') {
+          toFlutter.postMessage(JSON.stringify({
+            action: 'error',
+            message: Array.prototype.join.call(arguments, ' ')
+          }));
+        }
+      } catch(e) {}
+      if (oldError) oldError.apply(console, arguments);
+    };
+
+    window.onerror = function(message, source, lineno, colno, error) {
+      try {
+        if (window.toFlutter && typeof toFlutter.postMessage === 'function') {
+          toFlutter.postMessage(JSON.stringify({
+            action: 'error',
+            message: message + ' @ ' + source + ':' + lineno
+          }));
+        }
+      } catch(e) {}
+    };
+  })();
+
   let map, busCircle, busPath;
-  var busMarker;
+  let busMarker;
   let selectcircle;
-  var stops = [];
-  var locas = [];
+  let stops = [];
+  let locas = [];
 
-  function initMap() {
-    kakao.maps.load(function() {
-      const container = document.getElementById('map');
-      const center = new kakao.maps.LatLng($initLat, $initLng);
-      map = new kakao.maps.Map(container, {
-        center: center,
-        level: 4
-      });
-      selectcircle = new kakao.maps.Circle({
-        center: center,
-        radius: 15,
-        strokeWeight: 1,
-        strokeColor: '#3388ff',
-        strokeOpacity: 0.8,
-        strokeStyle: 'solid',
-        fillColor: '#3388ff',
-        fillOpacity: 0.8
-      });
+    function createMap() {
+    var container = document.getElementById('map');
+    if (!container) {
+      console.error('Map container not found');
+      return;
+    }
 
-      busMarker = new kakao.maps.Marker({
-        position: center,
-        clickable: true
-      });
-      
+    // 현재 컨테이너 크기 디버그용 로그
+    console.log('map container size(before):',
+      container.clientWidth, container.clientHeight);
 
-      // 일종의 정확도/범위 느낌(옵션)
-      /*
-      busCircle = new kakao.maps.Circle({
-        center: center,
-        radius: 25,
-        strokeWeight: 1,
-        strokeColor: '#3388ff',
-        strokeOpacity: 0.8,
-        strokeStyle: 'solid',
-        fillColor: '#3388ff',
-        fillOpacity: 0.2
-      });
-      busCircle.setMap(map);*/
-
-      busPath = new kakao.maps.Polyline({
-        path: [],
-        strokeWeight: 8,
-        strokeColor: '#00A0FF',
-        strokeOpacity: 0.8,
-        strokeStyle: 'solid'
-      });
-      busPath.setMap(map);
-      
-      kakao.maps.event.addListener(map, 'dragend', function() {    
-        var bounds=map.getBounds();
-        var swLatLng=bounds.getSouthWest();
-        var neLatLng=bounds.getNorthEast();
-        var level=map.getLevel();
-
-        resetstops();
-
-        if(level<5) {
-          const dataToSend = JSON.stringify({
-            action: 'viewmove', // Flutter에서 처리할 액션 이름
-            startlng: swLatLng.getLng(),
-            endlng: neLatLng.getLng(),
-            startlat: swLatLng.getLat(), // 이동할 페이지에 전달할 데이터 (예: 상세 정보 ID)
-            endlat: neLatLng.getLat()
-          });
-          toFlutter.postMessage(dataToSend);
-        }
-      });
-      kakao.maps.event.addListener(map, 'zoom_changed', function() {        
-        var bounds=map.getBounds();
-        var swLatLng=bounds.getSouthWest();
-        var neLatLng=bounds.getNorthEast();
-        var level=map.getLevel();
-
-        resetstops();
-
-        if(level<5) {
-          const dataToSend = JSON.stringify({
-            action: 'viewmove', // Flutter에서 처리할 액션 이름
-            startlng: swLatLng.getLng(),
-            endlng: neLatLng.getLng(),
-            startlat: swLatLng.getLat(), // 이동할 페이지에 전달할 데이터 (예: 상세 정보 ID)
-            endlat: neLatLng.getLat()
-          });
-          toFlutter.postMessage(dataToSend);
-        }
-      });
-      updateviewstops();
-
-      // Flutter로 초기화 완료 신호 전송
-      //onMapReady.postMessage('true');
+    var center = new kakao.maps.LatLng($initLat, $initLng);
+    map = new kakao.maps.Map(container, {
+      center: center,
+      level: 4
     });
+
+    // ===== iOS WebView에서 흰 화면 방지용: 레이아웃 다시 계산 =====
+    // WebView가 실제로 사이즈가 잡힌 뒤에 한 번 더 레이아웃/센터 재계산
+    setTimeout(function () {
+      if (!map) return;
+      console.log('calling map.relayout()');
+      map.relayout();
+      map.setCenter(center);
+    }, 200); // 0~200ms 정도면 충분
+
+    // 창 크기 변할 때마다 안전하게 한 번 더
+    window.addEventListener('resize', function () {
+      if (!map) return;
+      console.log('window resize -> map.relayout()');
+      map.relayout();
+    });
+    // ===== 여기까지 추가 =====
+
+    selectcircle = new kakao.maps.Circle({
+      center: center,
+      radius: 15,
+      strokeWeight: 1,
+      strokeColor: '#3388ff',
+      strokeOpacity: 0.8,
+      strokeStyle: 'solid',
+      fillColor: '#3388ff',
+      fillOpacity: 0.8
+    });
+
+    busMarker = new kakao.maps.Marker({
+      position: center,
+      clickable: true
+    });
+    busMarker.setMap(map);
+
+    // 필요하면 정확도 원
+    // busCircle = new kakao.maps.Circle({...});
+    // busCircle.setMap(map);
+
+    busPath = new kakao.maps.Polyline({
+      path: [],
+      strokeWeight: 8,
+      strokeColor: '#00A0FF',
+      strokeOpacity: 0.8,
+      strokeStyle: 'solid'
+    });
+    busPath.setMap(map);
+
+    kakao.maps.event.addListener(map, 'dragend', function() {
+      var bounds = map.getBounds();
+      var swLatLng = bounds.getSouthWest();
+      var neLatLng = bounds.getNorthEast();
+      var level = map.getLevel();
+
+      resetstops();
+
+      if (level < 5) {
+        const dataToSend = JSON.stringify({
+          action: 'viewmove',
+          startlng: swLatLng.getLng(),
+          endlng: neLatLng.getLng(),
+          startlat: swLatLng.getLat(),
+          endlat: neLatLng.getLat()
+        });
+        if (window.toFlutter && typeof toFlutter.postMessage === 'function') {
+          toFlutter.postMessage(dataToSend);
+        }
+      }
+    });
+
+    kakao.maps.event.addListener(map, 'zoom_changed', function() {
+      var bounds = map.getBounds();
+      var swLatLng = bounds.getSouthWest();
+      var neLatLng = bounds.getNorthEast();
+      var level = map.getLevel();
+
+      resetstops();
+
+      if (level < 5) {
+        const dataToSend = JSON.stringify({
+          action: 'viewmove',
+          startlng: swLatLng.getLng(),
+          endlng: neLatLng.getLng(),
+          startlat: swLatLng.getLat(),
+          endlat: neLatLng.getLat()
+        });
+        if (window.toFlutter && typeof toFlutter.postMessage === 'function') {
+          toFlutter.postMessage(dataToSend);
+        }
+      }
+    });
+
+    updateviewstops();
   }
-  
+
   function updateviewstops() {
-    var bounds=map.getBounds();
-    var swLatLng=bounds.getSouthWest();
-    var neLatLng=bounds.getNorthEast();
-    var level=map.getLevel();
+    if (!map) return;
+
+    var bounds = map.getBounds();
+    var swLatLng = bounds.getSouthWest();
+    var neLatLng = bounds.getNorthEast();
+    var level = map.getLevel();
 
     resetstops();
 
-    if(level<5) {
+    if (level < 5) {
       const dataToSend = JSON.stringify({
         action: 'viewmove',
         startlng: swLatLng.getLng(),
@@ -5012,17 +5207,19 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
         startlat: swLatLng.getLat(),
         endlat: neLatLng.getLat()
       });
-      toFlutter.postMessage(dataToSend);
-      console.log("1009");
+      if (window.toFlutter && typeof toFlutter.postMessage === 'function') {
+        toFlutter.postMessage(dataToSend);
+      }
+      console.log("updateviewstops called");
     }
   }
-  
+
   function resetstops() {
     for (var i = 0; i < stops.length; i++) {
       stops[i].setMap(null);
-    }            
+    }
   }
-  
+
   // Flutter에서 이 함수를 호출해 버스 위치 갱신
   function updateBus(json) {
     try {
@@ -5031,14 +5228,14 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
 
       const pos = new kakao.maps.LatLng(data.lat, data.lng);
       busMarker.setPosition(pos);
-      busCircle.setPosition(pos);
+      if (busCircle) {
+        busCircle.setPosition(pos);
+      }
 
-      // 이동 경로(폴리라인) 이어 붙이기
       const oldPath = busPath.getPath();
       oldPath.push(pos);
       busPath.setPath(oldPath);
 
-      // 화면 상단 배지 업데이트
       const badge = document.getElementById('badge');
       if (badge) {
         badge.innerText = \`lat: \${data.lat.toFixed(6)}, lng: \${data.lng.toFixed(6)} | speed: \${data.speed ?? '-'} | heading: \${data.heading ?? '-'}\`;
@@ -5048,120 +5245,120 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     }
   }
 
-  // 마커 위치로 지도를 부드럽게 센터링
   function focusToBus() {
     if (!map || !busMarker) return;
     const pos = busMarker.getPosition();
     map.panTo(pos);
   }
-  
+
   function drawBusroute(addbusStop) {
     try {
       const data = (typeof addbusStop === 'string') ? JSON.parse(addbusStop) : addbusStop;
-      if (!map || !busMarker) return;
+      if (!map || !busPath) return;
 
-      const pos=new kakao.maps.LatLng(data.gpslati,data.gpslong);
-      
-      const oldPath=busPath.getPath();
+      const pos = new kakao.maps.LatLng(data.gpslati, data.gpslong);
+      const oldPath = busPath.getPath();
       oldPath.push(pos);
       busPath.setPath(oldPath);
     } catch (e) {
-      console.error('drawRoute Error:',e);
+      console.error('drawBusroute error:', e);
     }
   }
-  
-  function markStop(nodenm,nodeid,lati,long) {
+
+  function markStop(nodenm, nodeid, lati, long) {
     const pos = new kakao.maps.LatLng(lati, long);
-    busMarker = new kakao.maps.Marker({
-        map: map,
-        position: pos,
-        clickable: true
+    var marker = new kakao.maps.Marker({
+      map: map,
+      position: pos,
+      clickable: true
     });
-    kakao.maps.event.addListener(busMarker, 'click', function() {
+    kakao.maps.event.addListener(marker, 'click', function() {
       const dataToSend = JSON.stringify({
-        action: 'navigateToDetail', // Flutter에서 처리할 액션 이름
-        nodeid: nodeid, // 이동할 페이지에 전달할 데이터 (예: 상세 정보 ID)
+        action: 'navigateToDetail',
+        nodeid: nodeid,
         name: nodenm
       });
-      toFlutter.postMessage(dataToSend);
+      if (window.toFlutter && typeof toFlutter.postMessage === 'function') {
+        toFlutter.postMessage(dataToSend);
+      }
     });
   }
-  
+
   function markStop_ff(addmark) {
     const data = (typeof addmark === 'string') ? JSON.parse(addmark) : addmark;
     const pos = new kakao.maps.LatLng(data.lati, data.long);
-    var busMarker = new kakao.maps.Marker({
-        map: map,
-        position: pos,
-        clickable: true
+    var marker = new kakao.maps.Marker({
+      map: map,
+      position: pos,
+      clickable: true
     });
-    kakao.maps.event.addListener(busMarker, 'click', function() {
+    kakao.maps.event.addListener(marker, 'click', function() {
       selectcircle.setMap(null);
       selectcircle.setPosition(pos);
       selectcircle.setMap(map);
-      
-      if(map.getLevel()!=3) {
+
+      if (map.getLevel() != 3) {
         map.setLevel(3);
       }
-      
-      const movepos = new kakao.maps.LatLng(data.lati-0.0015, data.long);
+
+      const movepos = new kakao.maps.LatLng(data.lati - 0.0015, data.long);
       map.panTo(movepos);
-      
+
       const dataToSend = JSON.stringify({
-        action: 'navigateToDetail', // Flutter에서 처리할 액션 이름
-        stopindex: data.index, // 이동할 페이지에 전달할 데이터 (예: 상세 정보 ID)
-        //name: data.nodenm,
-        //number: data.nodeno
+        action: 'navigateToDetail',
+        stopindex: data.index
       });
-      toFlutter.postMessage(dataToSend);
-      
+      if (window.toFlutter && typeof toFlutter.postMessage === 'function') {
+        toFlutter.postMessage(dataToSend);
+      }
+
       updateviewstops();
     });
-    stops.push(busMarker);
+    stops.push(marker);
   }
+
   function selectstop_insearch(stop) {
     const data = (typeof stop === 'string') ? JSON.parse(stop) : stop;
     const pos = new kakao.maps.LatLng(data.lati, data.long);
     selectcircle.setMap(null);
     selectcircle.setPosition(pos);
     selectcircle.setMap(map);
-    
-    if(map.getLevel()!=3) {
+
+    if (map.getLevel() != 3) {
       map.setLevel(3);
     }
-    const movepos = new kakao.maps.LatLng(data.lati-0.0015, data.long);
+    const movepos = new kakao.maps.LatLng(data.lati - 0.0015, data.long);
     map.panTo(movepos);
-    
+
     updateviewstops();
   }
-  
+
   function movetopos(currentpos) {
-    const data=(typeof currentpos === 'string') ? JSON.parse(currentpos) : currentpos;
+    const data = (typeof currentpos === 'string') ? JSON.parse(currentpos) : currentpos;
     const pos = new kakao.maps.LatLng(data.lati, data.long);
-    if(map.getLevel()>3) {
+    if (map.getLevel() > 3) {
       map.setLevel(3);
     }
     map.panTo(pos);
-    
+
     updateviewstops();
   }
-  
+
   function moveforvisibility(selectstop) {
     const data = (typeof selectstop === 'string') ? JSON.parse(selectstop) : selectstop;
-    
-    if(map.getLevel()!=3) {
+
+    if (map.getLevel() != 3) {
       map.setLevel(3);
     }
-    const movepos = new kakao.maps.LatLng(data.lati-0.0015, data.long);
+    const movepos = new kakao.maps.LatLng(data.lati - 0.0015, data.long);
     map.panTo(movepos);
-    
+
     updateviewstops();
   }
-  
+
   function markloca(location) {
     const data = (typeof location === 'string') ? JSON.parse(location) : location;
     const pos = new kakao.maps.LatLng(data.lati, data.long);
-    //console.log(data.lati, data.long);
     let locaCircle = new kakao.maps.Circle({
       center: pos,
       radius: 11,
@@ -5179,19 +5376,33 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
   function resetlocas() {
     for (var i = 0; i < locas.length; i++) {
       locas[i].setMap(null);
-    }            
+    }
   }
-  
+
   function resetPath() {
+    if (!busPath) return;
     busPath.setPath([]);
   }
 
-  // 초기화
-  window.addEventListener('load', initMap);
+  // Kakao SDK 로드 후 지도 초기화
+  function initKakaoMap() {
+    if (typeof kakao === 'undefined' || !kakao.maps) {
+      console.error('Kakao Maps SDK not loaded yet');
+      return;
+    }
+    kakao.maps.load(function() {
+      createMap();
+    });
+  }
+
+  // DOM 준비되면 초기화
+  document.addEventListener('DOMContentLoaded', function() {
+    initKakaoMap();
+  });
 </script>
 </head>
 <body>
-  <!--<div id="badge" class="badge">loading…</div>-->
+  <!-- <div id="badge" class="badge">loading…</div> -->
   <div id="map"></div>
 </body>
 </html>

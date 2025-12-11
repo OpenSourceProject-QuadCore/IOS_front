@@ -83,6 +83,7 @@ flutter:
     - assets/csv/gumi_buses(sortinid)_inEng.csv
     - assets/csv/gumi_busnstop_search_inEng.csv
     - assets/csv/gumi_bus_routes_inroad.csv
+    - assets/icon/
 
 
   # An image asset can refer to one or more resolution-specific "variants", see
